@@ -88,6 +88,7 @@
   figcaption b { color: var(--ink); }
   .figrow { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
   .figrow figure { margin: 0; }
+  .figrow.fig5 { grid-template-columns: 1500fr 2558fr; }
   @media (max-width: 720px) { .figrow { grid-template-columns: 1fr; } }
 
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin: 18px 0; }
@@ -114,9 +115,6 @@
   .tabcap { font-size: 14.5px; color: var(--ink-2); line-height: 1.5; margin: -6px 0 18px; }
   .tabcap b { color: var(--ink); }
 
-  details { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 10px 18px; margin: 14px 0; }
-  details summary { cursor: pointer; font-weight: 600; font-size: 15.5px; }
-  details[open] summary { margin-bottom: 10px; }
 
   .appendix-banner { display: inline-block; font-size: 12.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
   footer { padding: 36px 0 60px; color: var(--muted); font-size: 13.5px; text-align: center; border-top: 1px solid var(--line); }
@@ -167,55 +165,34 @@
 <!-- ============================ METHOD ============================ -->
 <section id="method">
   <h2><span class="num">1</span>Method</h2>
-  <p>A VLA maps images and an instruction to robot commands through a vision-language backbone. We want to find, inside that backbone, residual directions and MLP units that carry a motion concept such as <i>up</i> or <i>slow</i>, and to change the policy's behavior by editing them at inference time without touching the weights. The method has three parts: a Jacobian-lens pullback that turns any scalar readout of the policy's output into a direction at every layer; two families of readouts, linguistic and physical, that give semantic and motor directions; and a residual-swap intervention.</p>
+  <p>A VLA maps images and an instruction to robot commands through a vision-language backbone. We want to find, inside that backbone, residual directions and MLP units that carry a motion concept such as <i>up</i> or <i>slow</i>, and to change the policy's behavior by editing them at inference time without touching the weights. The method has three parts: a Jacobian-lens pullback that turns any scalar readout of the policy's output into a direction at every layer; two families of readouts, linguistic and physical, that give semantic and motor directions; and a gated residual-swap intervention.</p>
 
   <h3>Jacobian pullback</h3>
-  <p>Let \(h^{(\ell)}\in\mathbb R^{P\times d}\) be the residual stream after block \(\ell\) over \(P\) prefix positions. The logit lens reads an intermediate residual by projecting it onto the output vocabulary, and prior VLA steering selects neurons by the tokens their write vectors promote. Both ignore everything downstream of layer \(\ell\): later blocks, normalization, and, for \(\pi_{0.5}\), a flow-matching action expert that has no vocabulary at all. We instead ask how the policy's <b>output</b> responds to a perturbation at layer \(\ell\).</p>
-  <p>Let \(J\) be a scalar readout of the model output \(z\), either a logit score or a statistic of the sampled action chunk, and let \(\mathcal S\) be a set of source positions. Adding one shared perturbation \(\delta\) to the residual at every position in \(\mathcal S\) after block \(\ell\) and differentiating at \(\delta=0\) gives</p>
-  <div class="card eq">
-  $$ g^{(\ell)}_{\mathcal S}=\nabla_\delta J\big(h^{(\ell)}+\mathbf 1_{\mathcal S}\delta^\top\big)\Big|_{\delta=0}
-  =\sum_{p\in\mathcal S}\Big(\frac{\partial z}{\partial h^{(\ell)}_p}\Big)^{\!\top}\nabla_zJ,
-  \qquad \hat g^{(\ell)}=\frac{\bar g^{(\ell)}}{\|\bar g^{(\ell)}\|_2}, $$
-  </div>
-  <p>where \(\bar g^{(\ell)}\) averages the raw gradient over \(N\) calibration frames. The right-hand side is a vector-Jacobian product through the exact downstream computation, so one backward pass yields a direction at every layer, and each direction inherits whatever nonlinearity lies between layer \(\ell\) and the output. Two source scopes are used: <b>S2</b> perturbs only the final valid prefix position; <b>S3</b> perturbs every valid image and text position. A neuron is ranked for a direction by the signed cosine of its MLP write vector with \(\hat g^{(\ell)}\).</p>
+  <p>The logit lens reads an intermediate residual by projecting it onto the output vocabulary, and prior VLA steering selects neurons by the tokens their write vectors promote. Both ignore everything downstream of the layer being read: later blocks, normalization, and, for \(\pi_{0.5}\), a flow-matching action expert that has no vocabulary at all. We instead ask how the policy's <b>output</b> responds to a perturbation of the residual stream at a given layer.</p>
+  <p>Concretely, we take a scalar readout of the model output, either a language score or a statistic of the sampled action chunk, and differentiate it with respect to a perturbation applied to the residual stream after a chosen block. The result is a vector-Jacobian product through the exact downstream computation, so one backward pass yields a direction at every layer, and each direction inherits whatever nonlinearity lies between that layer and the output. Directions are averaged over a set of calibration frames and normalized. Two source scopes are used: one perturbs only the final prefix position, the other perturbs every valid image and text position. A neuron is ranked for a direction by how well its MLP write vector aligns with that direction.</p>
 
   <h3>Two families of readouts</h3>
-  <div class="legend"><span class="sem">Semantic (language readout)</span><span class="phys">Physical / kinematic (action readout)</span><span class="shared">Shared (sum of both)</span></div>
+  <div class="legend"><span class="sem">Semantic (language readout)</span><span class="phys">Physical / kinematic (action readout)</span><span class="shared">Shared (both)</span></div>
   <h4>Semantic pullbacks</h4>
-  <p>For a concept \(c\), let \(\mathcal T_c\) be a set of single-token synonyms and \(\mathcal C\) a centering vocabulary. The centered readout vector and the \(\pi_{0.5}\) objective are</p>
-  <div class="card eq">
-  $$ u_c=\frac1{|\mathcal T_c|}\sum_{t\in\mathcal T_c}E_t-\frac1{|\mathcal C|}\sum_{t\in\mathcal C}E_t,\qquad
-  J^{\mathrm{sem}}_c=\frac1{|\mathcal V|}\sum_{p\in\mathcal V}\big\langle u_c,\operatorname{RMSNorm}\big(h^{(L-1)}_p\big)\big\rangle, $$
-  </div>
-  <p>where \(E_t\) is the output embedding of token \(t\). \(\pi_{0.5}\) never decodes language, so \(J^{\mathrm{sem}}_c\) probes how strongly the final backbone state promotes \(c\) over the background. Differentiating it gives the <b>semantic J-lens</b> direction; normalizing \(u_c\) directly, with no Jacobian, gives the static <b>semantic logit</b> baseline.</p>
+  <p>For a concept word, the semantic readout measures how strongly the final backbone state promotes that word relative to a background vocabulary, using the model's own output embeddings and final normalization. \(\pi_{0.5}\) never decodes language, so this readout probes the backbone's latent preference for the concept rather than any generated text; for OpenVLA the same score is read at its action-prediction steps. Differentiating this readout gives the <b>semantic J-lens</b> direction. Using the concept's embedding direction directly, with no Jacobian, gives the static <b>semantic logit</b> baseline, the same direction at every layer.</p>
   <h4>Kinematic pullbacks</h4>
-  <p>A kinematic readout is a differentiable statistic of the predicted commands. For \(\pi_{0.5}\) we fix the sampling noise, run the ten Euler steps of the flow expert on the perturbed prefix, unnormalize the action chunk, and convert it to end-effector displacements \(D_t\in\mathbb R^3\). Three objectives measure the mean vertical displacement, the mean speed, and the mean within-chunk jerk:</p>
-  <div class="card eq">
-  $$ J^{dz}=\frac1H\sum_{t=1}^H D_{t,z},\qquad
-  J^{\mathrm{speed}}=\frac1{H\Delta t}\sum_{t=1}^H\|D_t\|_2,\qquad
-  J^{\mathrm{jerk}}=\frac{1}{(H-2)\Delta t^3}\sum_{t=2}^{H-1}\big\|D_{t+1}-2D_t+D_{t-1}\big\|_2 . $$
-  </div>
-  <p>Their negatives define <i>down</i>, <i>slow</i>, and <i>smooth</i>. Because the expert attends to the prefix cache at every denoising step, the gradient flows through the whole sampler. For OpenVLA, whose actions are discrete tokens, the vertical readout is a centered logit score over the upward or downward action bins. These give the <b>physical J-lens</b> direction. The <b>shared</b> direction is the normalized sum of the unit semantic and physical directions at the same layer and scope.</p>
+  <p>A kinematic readout is a differentiable statistic of the predicted commands. For \(\pi_{0.5}\) we fix the sampling noise, run the flow-matching action expert on the perturbed prefix, and convert the predicted action chunk into end-effector displacements. Three readouts measure the chunk's mean vertical displacement, its mean speed, and its mean within-chunk jerk; their negatives define <i>down</i>, <i>slow</i>, and <i>smooth</i>. Because the expert attends to the prefix at every denoising step, the gradient flows through the whole sampler rather than through a single step. For OpenVLA, whose actions are discrete tokens, the vertical readout is a score over the upward or downward action bins. These give the <b>physical J-lens</b> direction. The <b>shared</b> direction combines the unit semantic and physical directions at the same layer and scope, so it co-activates the concept and the command.</p>
 
   <h3>Feature steering: residual swap</h3>
-  <p>Given unit source and target directions \(\hat d\) and \(\hat u\) at layer \(\ell\), for example <i>down</i> and <i>up</i> or <i>soup</i> and <i>cheese</i>, we edit every position \(p\in\mathcal S\) by</p>
-  <div class="card eq">
-  $$ h'_p=h_p+\alpha\,\big[\langle h_p,\hat d\rangle\big]_{+}\,(\hat u-\hat d),\qquad \alpha=1 . $$
-  </div>
-  <p>The edit is gated by the source: if the state does not encode the source concept, nothing changes. Otherwise it removes a source-directed component and adds an equal coefficient along the target, acting only in \(\mathrm{span}(\hat u,\hat d)\) and leaving the orthogonal complement untouched. For antipodal poles (\(\hat d=-\hat u\)) the swap is a one-sided reflection that preserves the residual norm exactly. Zero-strength and identical-direction edits are exact no-ops and serve as controls. The action expert is never edited.</p>
+  <p>Given a source direction and a target direction at one layer, for example <i>down</i> and <i>up</i> or <i>soup</i> and <i>cheese</i>, we apply a single edit to the residual stream at the chosen positions. The edit is gated by the source: if the state does not encode the source concept, nothing changes. Otherwise it removes the source-directed component and adds an equal amount along the target, acting only in the plane spanned by the two directions and leaving the orthogonal complement untouched. For opposite poles the swap is a one-sided reflection that preserves the residual norm exactly. Downstream blocks and, for \(\pi_{0.5}\), the action expert respond to the edited state through the ordinary forward pass; the action expert itself is never edited. Zero-strength and identical-direction edits are exact no-ops and serve as controls.</p>
 </section>
 
 <!-- ============================ KINEMATIC STEERING ============================ -->
 <section id="results">
   <h2><span class="num">2</span>Kinematic-level steering</h2>
-  <p>We evaluate \(\pi_{0.5}\) on LIBERO and DROID and OpenVLA on LIBERO. Open-loop evaluation compares steered and unedited predictions on the same held-out frame under identical sampling noise; closed-loop evaluation runs full LIBERO episodes from matched initial states; real-world trials run on a DROID Franka arm. Unless stated otherwise, an intervention is one residual swap at one VLM layer with strength one. Conditions are the semantic, physical, and shared J-lens directions, the static semantic-logit direction, and, where available, the adverb appended to the prompt.</p>
+  <p>We evaluate \(\pi_{0.5}\) on LIBERO and DROID and OpenVLA on LIBERO. Open-loop evaluation compares steered and unedited predictions on the same held-out frame under identical sampling noise; closed-loop evaluation runs full LIBERO episodes from matched initial states; real-world trials run on a DROID Franka arm. Unless stated otherwise, an intervention is one residual swap at one VLM layer. Conditions are the semantic, physical, and shared J-lens directions, the static semantic-logit direction, and, where available, the adverb appended to the prompt.</p>
   <p>Vertical direction, speed, and jerk are exactly the quantities the kinematic objectives read out. The questions are whether the physical direction survives finite single-layer edits, closed-loop execution, and a real robot; whether the semantic direction for the same word (<i>up</i>, <i>slow</i>, <i>smooth</i>) moves the robot at all; and whether the shared direction helps.</p>
 
   <h3>Vertical direction</h3>
-  <p>For vertical swaps we report the expected-direction ratio \(R_z=100\,\mathbb E\big[s\,\Delta v_z/\|\Delta\mathbf v\|_2\big]\), where \(\Delta\mathbf v\) is the steered-minus-baseline velocity command and \(s=\pm1\) for up and down: \(+100\) means every change points the intended way.</p>
+  <p>For vertical swaps we report the expected-direction ratio: the mean, over frames, of how much of the steered-minus-baseline velocity command points in the intended vertical direction. A value of +100 means every change points the intended way; the ratio ignores magnitude and success.</p>
   <figure>
     <img src="figures/openloop_updown_lines.png" alt="Open-loop vertical steering by VLM layer for OpenVLA, pi0.5 DROID, and pi0.5 LIBERO">
-    <figcaption><b>Figure 1. Open-loop vertical steering by VLM layer.</b> Expected-direction ratio of the paired steered-minus-baseline velocity command for up&rarr;down (a&ndash;c) and down&rarr;up (d&ndash;f) swaps in OpenVLA on LIBERO (a, d), \(\pi_{0.5}\) DROID (b, e), and \(\pi_{0.5}\) LIBERO (c, f). Each point is one single-layer swap at strength 1 evaluated against the unedited prediction on the same frame under identical noise (dashed); bands are 95% bootstrap intervals over frames, and a cross marks a layer at which no frame changed.</figcaption>
+    <figcaption><b>Figure 1. Open-loop vertical steering by VLM layer.</b> Expected-direction ratio of the paired steered-minus-baseline velocity command for up&rarr;down (a&ndash;c) and down&rarr;up (d&ndash;f) swaps in OpenVLA on LIBERO (a, d), \(\pi_{0.5}\) DROID (b, e), and \(\pi_{0.5}\) LIBERO (c, f). Each point is one single-layer swap evaluated against the unedited prediction on the same frame under identical noise (dashed); bands are 95% bootstrap intervals over frames, and a cross marks a layer at which no frame changed.</figcaption>
   </figure>
   <div class="callout">
     <p>In \(\pi_{0.5}\) LIBERO the layer-averaged ratio is <b>93.8%</b> for physical and <b>83.7%</b> for shared up&rarr;down steering, against 10.1% for semantic J-lens and &minus;9.2% for semantic logit; down&rarr;up gives 81.6%, 83.4%, and 7.5%. DROID reproduces this on another checkpoint and embodiment (physical 81.6% / 84.8%, shared 67.0% / 82.3%, semantic within two points of zero). OpenVLA is more layer-dependent and weaker overall (shared 30.4% / 36.9%, physical 30.1% / 27.2%), and its semantic J-lens is the instructive case: 33.1% for down&rarr;up but <b>&minus;24.7%</b> for up&rarr;down, so the word-aligned direction sends the robot the wrong way for one of two opposite swaps.</p>
@@ -246,7 +223,7 @@
     </tbody>
   </table>
   </div>
-  <p class="tabcap"><b>Table 1. Closed-loop LIBERO-10 motion control</b> (layer 10, strength 1, all valid prefix positions). Each condition runs 100 matched trials (10 tasks &times; 10 initial states), failures included. Changes are mean paired percentages of measured EEF speed or jerk relative to the matched baseline (unedited means: 125.5 mm/s and 3.024 m/s&sup3;), with 95% bootstrap intervals over trial pairs; the prompt appends the corresponding adverb. Bold marks the best point estimate per goal, not statistical superiority.</p>
+  <p class="tabcap"><b>Table 1. Closed-loop LIBERO-10 motion control</b> (single-layer swaps at layer 10). Each condition runs 100 matched trials (10 tasks &times; 10 initial states), failures included. Changes are mean paired percentages of measured EEF speed or jerk relative to the matched baseline (unedited means: 125.5 mm/s and 3.024 m/s&sup3;), with 95% bootstrap intervals over trial pairs; the prompt appends the corresponding adverb. Bold marks the best point estimate per goal, not statistical superiority.</p>
   <p>In closed loop, physical fast&rarr;slow lowers measured speed by 5.2% at 95% success versus 92% unedited. Shared jerky&rarr;smooth lowers measured jerk by 9.8% against 4.7% for physical, at 91% success, while also slowing by 3.4%, so smoothing is not speed-independent; shared slow&rarr;fast has the largest speed-up (2.9%) but its interval includes zero. Prompt and semantic-only conditions stay within 4.5% of baseline with every interval including zero.</p>
 
   <h4>Real-world DROID motion steering</h4>
@@ -274,7 +251,7 @@
   <h2><span class="num">4</span>Why steering works: locating the two subspaces</h2>
   <p>The behavioral results show a division of labor. We ask what in the unedited representations produces it: where each family is expressed across depth, how the geometry of opposite concepts differs, whether features track movement in time, and whether single neurons are causally sufficient.</p>
 
-  <div class="figrow">
+  <div class="figrow fig5">
     <figure>
       <img src="figures/residual_up_S3_mean_absolute.png" alt="Mean absolute projection of unedited OpenVLA residuals onto unit up directions across layers">
       <figcaption><b>Figure 5a. Depth.</b> Mean absolute projection of unedited OpenVLA residuals onto unit <i>up</i> directions (100 observations, bands &plusmn;1.96 SE). Physical J-lens directions are strongly expressed only near the output; semantic directions stay small.</figcaption>
@@ -286,7 +263,7 @@
   </div>
 
   <h3>Depth</h3>
-  <p>Physical J-lens projections rise sharply in the final layers of OpenVLA while semantic projections stay small throughout, so the kinematic direction is expressed near the output. The two families are not independent across depth: pulling late physical directions back to earlier layers in \(\pi_{0.5}\) aligns them systematically with the semantic directions native to those layers (Appendix B.3). Projection magnitude measures expression, not causal importance.</p>
+  <p>Physical J-lens projections rise sharply in the final layers of OpenVLA while semantic projections stay small throughout, so the kinematic direction is expressed near the output. The two families are not independent across depth: pulling late physical directions back to earlier layers in \(\pi_{0.5}\) aligns them systematically with the semantic directions native to those layers (Appendix B.2). Projection magnitude measures expression, not causal importance.</p>
   <h3>Geometry</h3>
   <p>In \(\pi_{0.5}\) LIBERO, semantic selections are positively aligned at all 18 layers (mean cosine 0.47 to 0.56 across source scopes), physical selections are opposed at every defined layer (mean &minus;0.19), and shared selections are near orthogonal (\(|\cos|\le0.12\)). The semantic subspace encodes <i>up</i> and <i>down</i> as related concepts; the kinematic subspace encodes them as opposing effects. This is why a word-aligned edit can be weak or wrong-signed, as in the OpenVLA sweep above, and why the shared direction does not inherit the conflation.</p>
 
@@ -309,16 +286,10 @@
 <section id="appendix">
   <div class="appendix-banner">Appendix</div>
   <h2>Supplementary results and protocols</h2>
-  <p class="small">Everything below mirrors the paper's appendix: full numeric tables, the single-neuron clamp study, the cross-layer pullback geometry, evaluation protocols, and limitations.</p>
+  <p class="small">Everything below mirrors the paper's appendix: full numeric tables, the single-neuron clamp study, the cross-layer pullback geometry, and limitations.</p>
 
-  <h3 id="appA1">A.1 Open-loop aggregation and layer summaries</h3>
-  <p>An open-loop sample is a fixed observation evaluated by both the unedited and intervened policy with matched initial sampling noise. The horizon is one for OpenVLA, ten for \(\pi_{0.5}\) LIBERO, and fifteen for \(\pi_{0.5}\) DROID. For direction, we average the paired Cartesian difference over the horizon and report a mean of per-frame ratios,</p>
-  <div class="card eq">
-  $$ \delta_n=\frac{1}{H}\sum_{t=1}^{H}\bigl(D_{n,t}^{(m)}-D_{n,t}^{(0)}\bigr),\qquad
-  R_z=\frac{100}{|\mathcal C|}\sum_{n\in\mathcal C}\frac{\sigma\delta_{n,z}}{\|\delta_n\|_2},\qquad
-  \Delta_q^{\rm open}=100\,\frac{\frac1N\sum_n q_n^{(m)}-\frac1N\sum_n q_n^{(0)}}{\frac1N\sum_n q_n^{(0)}} , $$
-  </div>
-  <p>where \(\mathcal C\) contains numerically nonzero changes (tolerance \(10^{-9}\) mm, no magnitude filtering). Speed and jerk effects compare condition means of per-frame horizon-mean command speed and within-chunk jerk. Figures use 2000 bootstrap resamples over frames (seed 20260924) and show the 2.5th and 97.5th percentiles. The four annotated extreme values are approximately +94% (DROID physical slow&rarr;fast, layer 14), +89% (DROID shared jerky&rarr;smooth, layer 0), +105% (LIBERO shared jerky&rarr;smooth, layer 0), and +943% (LIBERO physical jerky&rarr;smooth, layer 16); display clipping removes none of them from analysis, and the last one explains the positive mean jerk change for LIBERO physical steering below.</p>
+  <h3 id="appA1">A.1 Open-loop layer summaries</h3>
+  <p>An open-loop sample is a fixed observation evaluated by both the unedited and intervened policy with matched sampling noise. The direction metric is a mean over frames of how well the paired change in the predicted command aligns with the intended vertical direction; it measures alignment, not magnitude. Speed and jerk effects compare condition means of the per-frame command speed and within-chunk jerk. Bands in the figures are bootstrap intervals over evaluation frames. The four annotated extreme values are approximately +94% (DROID physical slow&rarr;fast, layer 14), +89% (DROID shared jerky&rarr;smooth, layer 0), +105% (LIBERO shared jerky&rarr;smooth, layer 0), and +943% (LIBERO physical jerky&rarr;smooth, layer 16); display clipping removes none of them from analysis, and the last one explains the positive mean jerk change for LIBERO physical steering below.</p>
 
   <div class="tablewrap">
   <table>
@@ -342,11 +313,7 @@
   <p class="tabcap"><b>Table A1. Equal-weight averages of the per-layer values in the open-loop figures.</b> Up/down entries are expected-direction ratios (%); speed and jerk entries are relative changes (%). OpenVLA averages 14 even layers 2&ndash;28; \(\pi_{0.5}\) averages layers 0&ndash;16. All layers and all plotted outliers are retained, with no magnitude filtering. These are summaries of separate single-layer interventions, not simultaneous edits. A dash denotes an unavailable baseline. J denotes J-lens.</p>
 
   <h3 id="appA2">A.2 Closed-loop LIBERO motion evaluation</h3>
-  <p>The primary closed-loop table (Table 1) evaluates ten tasks with ten matched trials per task and condition. Residual swaps use S3 at layer 10 and strength one; prompt controls append the adverb without a residual intervention. Speed is the episode mean of \(\|p_{k+1}-p_k\|_2/\Delta t\) in mm/s; jerk is the episode mean norm of the third finite difference of measured position divided by \(\Delta t^3\) in m/s&sup3;, with \(\Delta t=0.05\) s. The relative effect is a mean of paired percentage changes over \(M=100\) trial pairs,</p>
-  <div class="card eq">
-  $$ \Delta_q^{\rm closed}=\frac{100}{M}\sum_{i=1}^{M}\frac{q_i^{(m)}-q_i^{(0)}}{q_i^{(0)}} , $$
-  </div>
-  <p>whereas the open-loop and real-world effects compare condition means; the two estimands need not agree. Bootstrap intervals resample matched trial pairs. The table below restricts the analysis to pairs in which both policies succeed. Conditioning on success changes the sample differently for each method and can introduce selection bias, so the all-trial table remains primary.</p>
+  <p>The primary closed-loop table (Table 1) evaluates ten tasks with ten matched trials per task and condition, with every completed trial included whether or not it succeeds. Speed and jerk are measured on the executed end-effector trajectory, so they differ from the command-derived open-loop metrics, and the closed-loop effect is a mean of paired percentage changes whereas the open-loop and real-world effects compare condition means; the two estimands need not agree. Bootstrap intervals resample matched trial pairs. The table below restricts the analysis to pairs in which both policies succeed. Conditioning on success changes the sample differently for each method and can introduce selection bias, so the all-trial table remains primary.</p>
 
   <div class="tablewrap">
   <table>
@@ -438,63 +405,19 @@
   <h3 id="appB1">B.1 Single-neuron clamp experiment</h3>
   <figure class="narrow">
     <img src="figures/s3_layer6_row.png" alt="Single-neuron clamp sweeps at layer 6 in pi0.5 LIBERO for up, down, and fast">
-    <figcaption><b>Figure A1. Single-neuron clamp sweeps at layer 6 (S3) in \(\pi_{0.5}\) LIBERO.</b> One selected neuron per condition is overwritten with the clamp value at every valid prefix token; the \(y\)-axis is the paired change in the predicted command on 75 held-out demonstrations (mm for up and down, mm/s for fast), with approximate 95% intervals. Clamp 0 silences the neuron and is not the unedited baseline (dashed).</figcaption>
+    <figcaption><b>Figure A1. Single-neuron clamp sweeps at layer 6 (S3) in \(\pi_{0.5}\) LIBERO.</b> One selected neuron per condition is overwritten with the clamp value; the \(y\)-axis is the paired change in the predicted command on held-out demonstrations (mm for up and down, mm/s for fast), with approximate 95% intervals. Clamp 0 silences the neuron and is not the unedited baseline (dashed).</figcaption>
   </figure>
   <p><b>Causality.</b> Clamping one selected layer-6 neuron gives, at clamp 32, the largest intended command change for the shared selection on every concept (+0.40 &plusmn; 0.14 mm up, &minus;0.45 &plusmn; 0.17 mm down, +6.9 &plusmn; 2.3 mm/s fast), with physical next and semantic-only weaker or wrong-signed for down and fast. The ordering matches the residual-swap results at the level of single units. Together, the four analyses support complementary semantic and kinematic subspaces as the basis for steering, without establishing a complete causal circuit from language to motion.</p>
-  <details>
-    <summary>Protocol and operator definitions</summary>
-    <p>Each condition overwrites one selected post-gating MLP neuron at every valid prefix position before the down projection; a separate unedited run provides the paired baseline. Clamp values are {0, 0.5, 1, 2, 4, 8, 16, 32}, so the zero-clamp condition suppresses the neuron and must not be used as the unedited control. Evaluation uses 75 demonstrations with identical paired noise, 10-step denoising, and 10-action chunks; the \(y\)-axis is 50&times; the mean clipped \(z\)-action in mm for up/down and 1000&times; the mean norm of the clipped \(xyz\)-action in mm/s at 20 Hz for fast. Selected indices (zero-based): up: semantic 6161 (J-lens), 6589 (logit), physical 5111, shared 12834; down: 7046, 12486, 6037, 2312; fast: 1406, 1247, 14037, 3727.</p>
-    <p>For a neuron activation \(a_i\) and write vector \(w_i\), clamp, multiplication and addition would induce the direct changes</p>
-    $$ \Delta h_{\rm clamp}=(\kappa-a_i)w_i,\qquad \Delta h_{\rm multiply}=(\beta-1)a_iw_i,\qquad \Delta h_{\rm add}=\gamma w_i . $$
-    <p>Their no-op settings differ (\(\beta=1\), \(\gamma=0\)), whereas a fixed clamp is not generally a no-op. These identities define the operators; a matched comparison with residual swap would require the same observations, sampling noise, layer, edit scope and a documented strength-matching rule, which the existing clamp and swap plots do not supply.</p>
-  </details>
 
-  <h3 id="appB2">B.2 What the mechanistic figures measure</h3>
-  <details>
-    <summary>Figure details for Figures 5a, 5b, and 6</summary>
-    <p>The up/down geometry figure (5b) averages the raw BF16 MLP write vectors within each selected top-ten neuron set before taking their cosine, with no per-neuron normalization, score weighting, or sign flip. Rankings are by cosine with the J-lens semantic, logit-lens semantic, and J-lens \(dz\) directions; the shared curve uses the first ten neurons of the expanding rank intersection. Exact opposition of the physical objective gradients therefore need not imply exact opposition of the mean selected write vectors.</p>
-    <p>The OpenVLA residual-projection figure (5a) averages absolute projections of unedited post-block states onto unit directions over all expanded-prompt positions plus preceding generated tokens, uniformly across the seven action predictions of 100 unsteered greedy observations. J-lens \(dz\) projections peak at layer 31, logit-lens \(dz\) projections grow steadily, and semantic projections remain small at every layer. Shaded bands are observation standard-error intervals. Larger projections indicate expression of a direction, not by themselves its causal importance.</p>
-    <p>The qualitative LIBERO example (6) shows the demonstration "put both the alphabet soup and the cream cheese box in the basket" (334 timesteps, from the 75-frame open-loop evaluation split). Rows are the J-lens semantic neurons N6161 (up) and N7046 (down), the shared neurons N12834 and N2312, and the \(dz\) neurons N3819 and N6037. Activation is the post-gating MLP value averaged with sign over valid prefix tokens; each row is scaled by its own 99th percentile of absolute activation. The illustrated up physical neuron N3819 differs from the up clamp selection N5111.</p>
-    <p>Figure 1 evaluates OpenVLA on even layers 2&ndash;28 with 200 pooled frames, \(\pi_{0.5}\) DROID on layers 0&ndash;16 with 100 frames, and \(\pi_{0.5}\) LIBERO on layers 0&ndash;16 with 200 pooled frames; OpenVLA additionally has position- and shared-logit variants because its action bins have a static unembedding. Vectors use the historical vocabulary centers (OpenVLA 359 tokens, \(\pi_{0.5}\) 128/129 tokens). Figure 2 uses the same DROID (15-command horizon) and LIBERO (10-command horizon) frames.</p>
-  </details>
-
-  <h3 id="appB3">B.3 Cross-layer semantic&ndash;physical pullback geometry</h3>
+  <h3 id="appB2">B.2 Cross-layer semantic&ndash;physical pullback geometry</h3>
   <p>To compare vectors defined at different depths in \(\pi_{0.5}\) LIBERO, we pull the later-layer direction back to the earlier layer through the model's Jacobian, then compute its cosine with the direction native to that earlier layer. Rows index the semantic target layer and columns the physical target layer; on the diagonal the entry is a direct same-layer cosine. The S3 panels show stronger negative alignment for up and positive alignment for down when late physical directions are pulled back to several earlier semantic layers; S2 exhibits weaker alignment. These are geometric comparisons of fitted directions, not intervention success rates.</p>
   <figure class="tall">
     <img src="figures/pi05_libero_pullback_cosine_18x18.png" alt="Cross-layer pullback cosine grids for S2/S3 and up/down in pi0.5 LIBERO">
-    <figcaption><b>Figure A2. Cross-layer pullback cosine grids in \(\pi_{0.5}\) LIBERO.</b> The four panels show S2/S3 and up/down comparisons using the historical semantic128 vector bank. Each panel is an 18&times;18 grid: rows are semantic target layers and columns are physical target layers. The later direction is freshly pulled back to the earlier layer over 100 observations; the earlier direction remains at its native layer. Gray entries denote undefined physical directions at layer 17.</figcaption>
+    <figcaption><b>Figure A2. Cross-layer pullback cosine grids in \(\pi_{0.5}\) LIBERO.</b> The four panels show S2/S3 and up/down comparisons. Each panel is an 18&times;18 grid: rows are semantic target layers and columns are physical target layers. The later direction is pulled back to the earlier layer; the earlier direction remains at its native layer. Gray entries denote undefined physical directions at layer 17.</figcaption>
   </figure>
 
-  <h3 id="appC">C. Implementation details</h3>
-  <details>
-    <summary>Calibration, vocabularies, and scopes</summary>
-    <p>Directions are fitted on \(N=400\) calibration observations with the task's own instruction and native inputs. For \(\pi_{0.5}\) LIBERO, 40 observations per task are selected deterministically from a 1900-frame pool over the ten LIBERO-10 tasks; evaluation batches contain 100 observations from different demonstrations, disjoint from fitting demonstrations. For \(\pi_{0.5}\) DROID, four observations are taken from each of 100 episodes; its 100 evaluation frames are distinct frames from these same episodes, so DROID is frame-disjoint but not episode-held-out. The original OpenVLA physical bank uses all 1900 frames. For each observation we cache the forward pass, introduce an independent zero-valued edit variable after every block, evaluate the readout, and obtain all per-layer gradients in one reverse pass. Raw gradients are averaged over observations before per-layer normalization; \(\pi_{0.5}\) fitting runs in FP32 with FP64 accumulation.</p>
-    <p>Target sets contain only tokenizer-verified single-token entries. The reported \(\pi_{0.5}\) motion directions use historical 128/129-token centers, the reported OpenVLA directions a 359-token center, and the LIBERO soup&rarr;cheese noun directions are centered over token IDs 0&ndash;31999. Vector banks fitted with different centers are not interchangeable. A post-block edit at the final \(\pi_{0.5}\) prefix layer 17 cannot affect a later prefix cache, so steering sweeps exclude that layer.</p>
-  </details>
-  <details>
-    <summary>DROID command geometry and OpenVLA action readout</summary>
-    <p>For LIBERO, \(D_t=0.05\operatorname{clip}(A_t^{xyz},-1,1)\) metres with \(\Delta t=0.05\) s and \(H=10\). For DROID, with observed joints \(q\) and predicted joint commands \(v_t\),</p>
-    $$ \Delta q_t=\frac{0.2v_t}{\max(1,\|v_t\|_\infty)},\qquad D_t=\operatorname{FK}(q+\Delta q_t)-\operatorname{FK}(q),\qquad \Delta t=1/15\ \mathrm{s},\ H=15, $$
-    <p>where each prediction is referenced independently to the observed \(q\) rather than integrated. OpenVLA discretizes each of its seven action coordinates into 256 uniform bins; its vertical readout is the centered mean logit over the upward (or downward) bin set of coordinate index 2, each polarity centered separately, so the up and down readouts are not exact negatives of one another.</p>
-  </details>
-  <details>
-    <summary>Euler flow-matching backpropagation</summary>
-    <p>The \(\pi_{0.5}\) action expert integrates a learned velocity field \(v_\theta\) conditioned on the prefix key-value cache \(\mathrm{KV}(\delta)\). With fixed initial noise and \(\tau_k=1-k/K\), the Euler updates are \(x_{k+1}=x_k-\frac1K v_\theta(x_k,\tau_k;\mathrm{KV}(\delta))\) with \(K=10\), and reverse-mode differentiation through the unrolled solver gives</p>
-    $$ \frac{\partial J}{\partial\delta}=-\frac1K\sum_{k=0}^{K-1}\lambda_{k+1}^{\top}\frac{\partial v_\theta(x_k,\tau_k;\mathrm{KV}(\delta))}{\partial\delta},\qquad
-    \lambda_K=\nabla_{x_K}J,\quad \lambda_k=\lambda_{k+1}-\frac1K\Big(\frac{\partial v_\theta}{\partial x_k}\Big)^{\!\top}\lambda_{k+1}. $$
-    <p>Because the expert attends to the prefix cache at every step, every term depends on \(\delta\), and the gradient includes the full sampler and the action unnormalization.</p>
-  </details>
-  <details>
-    <summary>Residual-swap properties</summary>
-    <p>Write \(a=h^\top s\), \(b=h^\top t\), \(c=s^\top t\) with unit \(s,t\). If \(a\le0\), the swap leaves \(h\) unchanged (context-conditionality). For \(a>0\) and \(\alpha=1\), \(h'^\top s=ac\), \(h'^\top t=b+a(1-c)\), and \(\|h'\|_2^2-\|h\|_2^2=2a(b-ac)\): the target projection does not decrease, the source projection generally remains nonzero, and the norm can change. Any vector orthogonal to both \(s\) and \(t\) has identical inner product with \(h\) and \(h'\) (subspace preservation). When \(t=-s\), the swap is a one-sided Householder reflection \(h'=h+2[-\langle h,\hat u\rangle]_+\hat u\) and the norm is preserved exactly; for general strength the norm difference is \(4\alpha(\alpha-1)a^2\), preserved at strengths zero and one.</p>
-  </details>
-  <details>
-    <summary>Closed-loop randomization protocols</summary>
-    <p>Adverb rollouts use matched initial states and noise seeds derived from a hash of the trial seed and replanning index. Wildcard object trials use seeded native resets and native policy RNG splitting. Both predict ten commands and execute five before replanning, with ten settling steps and a 520-step limit. These protocols are separate and are not pooled. Real-world measurements come from the experiment workbook rather than from the simulation controller.</p>
-  </details>
-
-  <h3 id="appD">D. Limitations and reproducibility</h3>
-  <p>The Jacobian directions are averages of local sensitivities. Finite-strength interventions can change attention, activate nonlinearities, and alter subsequent observations, so an objective-aligned derivative is not a guarantee of a desired closed-loop effect. Object choice is evaluated on a small shared seed set and real-world measurements have small sample sizes. DROID open-loop evaluation is frame-disjoint but uses the calibration episodes. Speed and jerk are coupled, and the reported experiments do not isolate smoothness at fixed speed. The historical clamp study does not establish an operator ranking against addition, multiplication, or residual swap. No magnitude filtering or exclusion of clipped open-loop values is used in the reported results. Code, frozen numeric summaries, and the plotting scripts will be released after the review period.</p>
+  <h3 id="appC">C. Limitations</h3>
+  <p>The Jacobian directions are averages of local sensitivities. Finite-strength interventions can change attention, activate nonlinearities, and alter subsequent observations, so an objective-aligned derivative is not a guarantee of a desired closed-loop effect. Object choice is evaluated on a small shared seed set and real-world measurements have small sample sizes. DROID open-loop evaluation is frame-disjoint but uses the calibration episodes. Speed and jerk are coupled, and the reported experiments do not isolate smoothness at fixed speed. The historical clamp study does not establish an operator ranking against addition, multiplication, or residual swap. Code and numeric summaries will be released after the review period.</p>
 </section>
 
 <footer>
