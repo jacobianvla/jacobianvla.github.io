@@ -41,11 +41,6 @@
   .wrap { max-width: var(--max); margin: 0 auto; }
 
   header.hero { padding-block: 60px 20px; text-align: center; }
-  .venue {
-    display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
-    padding: 6px 12px; border-radius: 999px; margin-bottom: 20px;
-  }
   h1 {
     font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500;
     font-size: clamp(30px, 5vw, 48px); line-height: 1.12; margin: 0 0 10px; letter-spacing: -0.01em;
@@ -95,11 +90,6 @@
   .figrow figure { margin: 0; }
   @media (max-width: 720px) { .figrow { grid-template-columns: 1fr; } }
 
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 22px 0 8px; }
-  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
-  .tile .num { font-family: "Newsreader", Georgia, serif; font-size: 34px; font-weight: 500; line-height: 1; color: var(--accent); }
-  .tile .lab { font-size: 13.5px; color: var(--ink-2); margin-top: 8px; line-height: 1.4; }
-
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin: 18px 0; }
   .card.eq { padding-block: 6px; overflow-x: auto; }
   .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 18px 0; }
@@ -138,7 +128,6 @@
 <div class="wrap">
 
 <header class="hero">
-  <div class="venue">Anonymous project page &middot; under double-blind review</div>
   <h1>Words Are Not Motions:<br>Steering Vision-Language-Action Models with <em>Jacobian Pullbacks</em></h1>
   <p class="subtitle">The semantic direction that names a motion is not the one that executes it.</p>
   <p class="authors"><b>Anonymous Authors</b></p>
@@ -166,13 +155,6 @@
   <p class="lead">Just as humans formulate an intention to act before committing muscles to movement, vision-language-action (VLA) models must bridge high-level semantic reasoning with low-level physical control. Yet how conceptual goals translate into motor commands across intermediate representations remains opaque.</p>
   <p>Current steering methods typically isolate internal features by the vocabulary tokens they promote, implicitly assuming that the semantic representation naming a motion concept is the one that executes it. In this work, we refute this assumption by extending the Jacobian lens from discrete vocabulary logits to arbitrary differentiable objectives over continuous action trajectories. Our formulation computes vector-Jacobian pullbacks through the policy's downstream dynamics in a single backward pass, providing a training-free, probe-free mechanism that operates at inference time across both autoregressive heads and iterative flow-matching action experts.</p>
   <p>Evaluating across OpenVLA and \(\pi_{0.5}\) in simulation and on a physical manipulator reveals a fundamental double dissociation: action-grounded directions reliably modulate trajectory dynamics, including displacement, velocity, and smoothness, while preserving task completion, whereas vocabulary-aligned directions fail at physical control and only influence non-physical semantic choices such as target object selection. Mechanistic analysis reveals the geometric origin of this divergence: linguistic subspaces embed action antonyms as proximate semantic neighbors, whereas action-grounded subspaces map them to opposed vectors that phase-lock to gripper kinematics over time. Our findings demonstrate that effective VLA control requires intervening directly on the internal subspace governing physical execution rather than the linguistic features that label it.</p>
-
-  <div class="tiles">
-    <div class="tile"><div class="num">93.8%</div><div class="lab">Expected-direction ratio for physical up&rarr;down steering in \(\pi_{0.5}\) LIBERO (semantic J-lens: 10.1%)</div></div>
-    <div class="tile"><div class="num">&minus;9.8%</div><div class="lab">Closed-loop EEF jerk with the shared jerky&rarr;smooth swap, at 91% task success</div></div>
-    <div class="tile"><div class="num">+38%</div><div class="lab">Real-robot EEF speed under shared slow&rarr;fast steering (the "fast" prompt slows the robot)</div></div>
-    <div class="tile"><div class="num">3&rarr;6 / 10</div><div class="lab">Cheese choices after a single semantic soup&rarr;cheese swap, with 10/10 success</div></div>
-  </div>
 
   <h3>Contributions</h3>
   <ul class="bul">
